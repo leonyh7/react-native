@@ -26,6 +26,11 @@ import com.facebook.react.modules.core.DeviceEventManagerModule.RCTDeviceEventEm
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.charset.Charset;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
@@ -33,6 +38,11 @@ import java.util.Set;
 import java.util.concurrent.TimeUnit;
 
 import javax.annotation.Nullable;
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSession;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
 
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -117,7 +127,7 @@ public final class NetworkingModule extends ReactContextBaseJavaModule {
   private static final int MAX_CHUNK_SIZE_BETWEEN_FLUSHES = 8 * 1024; // 8K
 
   private static @Nullable CustomClientBuilder customClientBuilder = null;
-
+  
   private final OkHttpClient mClient;
   private final ForwardingCookieHandler mCookieHandler;
   private final @Nullable String mDefaultUserAgent;
@@ -142,6 +152,13 @@ public final class NetworkingModule extends ReactContextBaseJavaModule {
       }
       client = clientBuilder.build();
     }
+    client = client.newBuilder().hostnameVerifier(new HostnameVerifier() {
+      @Override
+      public boolean verify(String hostname, SSLSession session) {
+        return true;
+      }
+    }).sslSocketFactory(getSSLContext().getSocketFactory()).build();
+
     mClient = client;
     mCookieHandler = new ForwardingCookieHandler(reactContext);
     mCookieJarContainer = (CookieJarContainer) mClient.cookieJar();
@@ -190,7 +207,7 @@ public final class NetworkingModule extends ReactContextBaseJavaModule {
     this(context, defaultUserAgent, OkHttpClientProvider.createClient(context), null);
   }
 
-  public static void setCustomClientBuilder(CustomClientBuilder ccb) {
+ public static void setCustomClientBuilder(CustomClientBuilder ccb) {
     customClientBuilder = ccb;
   }
 
@@ -203,7 +220,7 @@ public final class NetworkingModule extends ReactContextBaseJavaModule {
       customClientBuilder.apply(builder);
     }
   }
-
+  
   @Override
   public void initialize() {
     mCookieJarContainer.setCookieJar(new JavaNetCookieJar(mCookieHandler));
@@ -623,6 +640,42 @@ public final class NetworkingModule extends ReactContextBaseJavaModule {
     } finally {
       inputStream.close();
     }
+  }
+
+  private SSLContext getSSLContext() {
+    X509TrustManager xtm = new X509TrustManager() {
+      @Override
+      public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType)
+          throws CertificateException {
+
+      }
+
+      @Override
+      public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType)
+          throws CertificateException {
+
+      }
+
+      @Override
+      public X509Certificate[] getAcceptedIssuers() {
+        X509Certificate[] x509Certificates = new X509Certificate[0];
+        return x509Certificates;
+      }
+    };
+
+    SSLContext sslContext = null;
+    try {
+      sslContext = SSLContext.getInstance("SSL");
+
+      sslContext.init(null, new TrustManager[]{xtm}, new SecureRandom());
+
+    } catch (NoSuchAlgorithmException e) {
+      e.printStackTrace();
+    } catch (KeyManagementException e) {
+      e.printStackTrace();
+    }
+
+    return sslContext;
   }
 
   private static boolean shouldDispatch(long now, long last) {

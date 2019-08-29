@@ -18,8 +18,19 @@ import java.security.Security;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
+import java.security.SecureRandom;
+import java.security.cert.CertificateException;
+import java.security.cert.X509Certificate;
+import java.security.KeyManagementException;
+import java.security.NoSuchAlgorithmException;
 
 import javax.annotation.Nullable;
+import javax.net.ssl.HostnameVerifier;
+import javax.net.ssl.SSLContext;
+import javax.net.ssl.SSLSession;
+import javax.net.ssl.TrustManager;
+import javax.net.ssl.X509TrustManager;
+
 
 import okhttp3.Cache;
 import okhttp3.ConnectionSpec;
@@ -27,8 +38,8 @@ import okhttp3.OkHttpClient;
 import okhttp3.TlsVersion;
 
 /**
- * Helper class that provides the same OkHttpClient instance that will be used for all networking
- * requests.
+ * Helper class that provides the same OkHttpClient instance that will be used
+ * for all networking requests.
  */
 public class OkHttpClientProvider {
 
@@ -49,11 +60,52 @@ public class OkHttpClientProvider {
     return sClient;
   }
 
+  public static SSLContext getSSLContext() {
+    X509TrustManager xtm = new X509TrustManager() {
+      @Override
+      public void checkClientTrusted(java.security.cert.X509Certificate[] chain, String authType)
+          throws CertificateException {
+
+      }
+
+      @Override
+      public void checkServerTrusted(java.security.cert.X509Certificate[] chain, String authType)
+          throws CertificateException {
+
+      }
+
+      @Override
+      public X509Certificate[] getAcceptedIssuers() {
+        X509Certificate[] x509Certificates = new X509Certificate[0];
+        return x509Certificates;
+      }
+    };
+
+    SSLContext sslContext = null;
+    try {
+      sslContext = SSLContext.getInstance("SSL");
+
+      sslContext.init(null, new TrustManager[] { xtm }, new SecureRandom());
+
+    } catch (NoSuchAlgorithmException e) {
+      e.printStackTrace();
+    } catch (KeyManagementException e) {
+      e.printStackTrace();
+    }
+
+    return sslContext;
+  }
+
   public static OkHttpClient createClient() {
     if (sFactory != null) {
       return sFactory.createNewNetworkModuleClient();
     }
-    return createClientBuilder().build();
+    return createClientBuilder().hostnameVerifier(new HostnameVerifier() {
+      @Override
+      public boolean verify(String hostname, SSLSession session) {
+        return true;
+      }
+    }).sslSocketFactory(getSSLContext().getSocketFactory()).build();
   }
 
   public static OkHttpClient createClient(Context context) {
@@ -65,16 +117,13 @@ public class OkHttpClientProvider {
 
   public static OkHttpClient.Builder createClientBuilder() {
     // No timeouts by default
-    OkHttpClient.Builder client = new OkHttpClient.Builder()
-      .connectTimeout(0, TimeUnit.MILLISECONDS)
-      .readTimeout(0, TimeUnit.MILLISECONDS)
-      .writeTimeout(0, TimeUnit.MILLISECONDS)
-      .cookieJar(new ReactCookieJarContainer());
+    OkHttpClient.Builder client = new OkHttpClient.Builder().connectTimeout(0, TimeUnit.MILLISECONDS)
+        .readTimeout(0, TimeUnit.MILLISECONDS).writeTimeout(0, TimeUnit.MILLISECONDS)
+        .cookieJar(new ReactCookieJarContainer());
 
     try {
       Class ConscryptProvider = Class.forName("org.conscrypt.OpenSSLProvider");
-      Security.insertProviderAt(
-        (Provider) ConscryptProvider.newInstance(), 1);
+      Security.insertProviderAt((Provider) ConscryptProvider.newInstance(), 1);
       return client;
     } catch (Exception e) {
       return enableTls12OnPreLollipop(client);
@@ -100,18 +149,16 @@ public class OkHttpClientProvider {
   }
 
   /*
-    On Android 4.1-4.4 (API level 16 to 19) TLS 1.1 and 1.2 are
-    available but not enabled by default. The following method
-    enables it.
+   * On Android 4.1-4.4 (API level 16 to 19) TLS 1.1 and 1.2 are available but not
+   * enabled by default. The following method enables it.
    */
   public static OkHttpClient.Builder enableTls12OnPreLollipop(OkHttpClient.Builder client) {
     if (Build.VERSION.SDK_INT <= Build.VERSION_CODES.KITKAT) {
       try {
         client.sslSocketFactory(new TLSSocketFactory());
 
-        ConnectionSpec cs = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS)
-                .tlsVersions(TlsVersion.TLS_1_2)
-                .build();
+        ConnectionSpec cs = new ConnectionSpec.Builder(ConnectionSpec.MODERN_TLS).tlsVersions(TlsVersion.TLS_1_2)
+            .build();
 
         List<ConnectionSpec> specs = new ArrayList<>();
         specs.add(cs);
